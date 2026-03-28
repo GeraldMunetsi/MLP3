@@ -25,7 +25,7 @@ import pandas as pd
 from scipy import stats
 
 from step0_model  import create_hybrid_mlp_model
-from utils_SIR import create_dataloaders, compute_metrics, get_device
+from utils_SIR import create_dataloaders, compute_metrics, get_device, PARAM_MINS, PARAM_MAXS
 
 
 # ============================================================================
@@ -83,7 +83,12 @@ def evaluate_model(model, test_loader, device, n_timesteps):
 
             all_predictions.append(predictions.cpu())
             all_targets.append(batch.y.cpu())
-            all_params.append(batch.params.cpu())
+            # Denormalise params_norm [0,1] → raw (tau, gamma, rho) for plots/reports
+            params_norm_cpu = batch.params_norm.cpu()
+            param_mins_t    = torch.tensor(PARAM_MINS)
+            param_maxs_t    = torch.tensor(PARAM_MAXS)
+            params_raw      = params_norm_cpu * (param_maxs_t - param_mins_t) + param_mins_t
+            all_params.append(params_raw)
 
     predictions = torch.cat(all_predictions, dim=0)
     targets     = torch.cat(all_targets,     dim=0)
@@ -443,11 +448,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_samples',   type=int, default=8)
     args = parser.parse_args()
 
-    print("\n" + "=" * 70)
-    print("STEP 5: FINAL TEST SET EVALUATION — 3-Parameter SIR (τ, γ, ρ)")
-    print("THESE ARE YOUR DISSERTATION RESULTS!")
-    print("=" * 70)
-
+ 
     device     = get_device()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -456,36 +457,27 @@ if __name__ == "__main__":
     dataloaders = create_dataloaders(args.data, batch_size=40)
     test_loader = dataloaders['test']
     n_timesteps = dataloaders['metadata']['n_timepoints']
-    print(f"✓ Test samples: {len(test_loader.dataset)}")
+    print(f"Test samples: {len(test_loader.dataset)}")
 
-    # ── Evaluate ──────────────────────────────────────────────────────────────
+    # Evaluate
     results_list, targets, params = evaluate_all_replicates(
         args.models_dir, test_loader, device, n_timesteps
     )
 
-    # ── Statistics ───────────────────────────────────────────────────────────
-    print("\n" + "=" * 70)
-    print("FINAL STATISTICS")
-    print("=" * 70)
+    # Statistics 
+  
     stats_dict = compute_aggregate_statistics(results_list)
 
-    # ── Figures ───────────────────────────────────────────────────────────────
-    print("\n" + "=" * 70)
-    print("GENERATING PUBLICATION-READY FIGURES")
-    print("=" * 70 + "\n")
+    # Figures 
+ 
     plot_test_predictions(results_list, targets, output_dir, args.n_samples)
     plot_metrics_distribution(stats_dict, output_dir)
 
-    # ── Save ──────────────────────────────────────────────────────────────────
-    print("\n" + "=" * 70)
-    print("SAVING FINAL RESULTS")
+  
+    
     print("=" * 70 + "\n")
     save_results(results_list, stats_dict, output_dir)
 
-    print("\n" + "=" * 70)
-    print("✅  FINAL TEST COMPLETE")
-    print("=" * 70)
+
     print(f"\n  Results → {output_dir}")
-    print("\n  Copy FINAL_DISSERTATION_RESULTS.txt into your thesis!")
-    print("  Use test_metrics_distribution.png  as a figure.")
-    print("  Use test_comparison_plots.png      as a figure.")
+   

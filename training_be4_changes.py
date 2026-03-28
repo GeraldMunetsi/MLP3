@@ -1,17 +1,3 @@
-"""
-step3_train_SIR3param.py
-========================
-Train multiple replicate models for the 3-parameter SIR emulator.
-
-Parameters: tau (τ), gamma (γ), rho (ρ)
-
-Changes from step3_train_REPLICATES_SIMPLIFIED.py:
-  ✗  dummy_graph_stats removed from train and validation loops
-  ✗  graph_stats argument removed from model.forward() calls
-  ✗  mlp_input_dim, mlp_hidden, mlp_layers removed from config
-  ✗  import changed from utils_AGE_MLP1 → utils_SIR
-  ✓  model(batch, n_timesteps=n_timesteps)  — clean, 3-param call
-"""
 
 import torch
 import torch.nn as nn
@@ -30,7 +16,7 @@ from scipy import stats
 from step0_model  import create_hybrid_mlp_model
 from utils_SIR import create_dataloaders, compute_metrics, get_device, EarlyStopping
 
-
+n_timepoints=50
 
 # REPRODUCIBILITY
 
@@ -41,10 +27,8 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
 
-
-# ============================================================================
 # BALANCED LOSS
-# ============================================================================
+
 
 def compute_balanced_loss(predictions, targets, device, weight_mode='balanced'):
     """
@@ -70,52 +54,35 @@ def compute_balanced_loss(predictions, targets, device, weight_mode='balanced'):
 
     N = 10000
 
-    # ── Normalise by per-sample max to handle scale differences ──────────────
-    S_max = S_true.max(dim=1, keepdim=True)[0].clamp(min=100)
-    I_max = I_true.max(dim=1, keepdim=True)[0].clamp(min=10)
-    R_max = R_true.max(dim=1, keepdim=True)[0].clamp(min=100)
+   
 
-    loss_S = ((S_pred - S_true) / S_max).pow(2).mean()
-    loss_I = ((I_pred - I_true) / I_max).pow(2).mean()
-    loss_R = ((R_pred - R_true) / R_max).pow(2).mean()
-
-    # ── Peak accuracy ─────────────────────────────────────────────────────────
+   
+    loss_S = ((S_pred - S_true)).pow(2).mean()
+    loss_I = ((I_pred - I_true)).pow(2).mean()
+    #loss_R = ((R_pred - R_true)).pow(2).mean()
+    
     I_pred_peak = I_pred.max(dim=1)[0]
     I_true_peak = I_true.max(dim=1)[0]
-    loss_I_peak = ((I_pred_peak - I_true_peak) / I_max.squeeze()).pow(2).mean()
+    loss_I_peak = (I_pred_peak - I_true_peak).pow(2).mean()
 
-    # ── Prevent I collapsing to zero ─────────────────────────────────────────
     I_pred_mean = I_pred.mean(dim=1)
     I_true_mean = I_true.mean(dim=1)
-    loss_I_mean = ((I_pred_mean - I_true_mean) / I_max.squeeze()).pow(2).mean()
-
-    # ── Conservation law soft penalty ────────────────────────────────────────
-    sum_pred          = S_pred + I_pred + R_pred
-    conservation_error = ((sum_pred - N) / N).pow(2).mean()
-
-    # Weights (I given extra weight to combat collapse) ─────────────────────
-    w_S               = 1.0
-    w_I               = 10.0
-    w_R               = 1.0
-    w_I_peak          = 5.0
-    w_I_mean          = 2.0
-    conservation_weight = 0.1
+    loss_I_mean = (I_pred_mean - I_true_mean).pow(2).mean()
+   # conservation_error = ((S_pred + I_pred + R_pred - N) / N).pow(2).mean()
 
     total_loss = (
-        w_S * loss_S
-        + w_I * loss_I
-        + w_R * loss_R
-        + w_I_peak * loss_I_peak
-        + w_I_mean * loss_I_mean
-        + conservation_weight * conservation_error
-    )
+    15.0 * loss_S +
+    15.0 * loss_I +
+    #1.0 * loss_R +
+    8.0 * loss_I_peak +
+    3.0 * loss_I_mean 
+   # 0.1 * conservation_error
+)
 
-    return total_loss, loss_S, loss_I, loss_R
+    return total_loss, loss_S, loss_I #, loss_R
 
 
-# ============================================================================
 # TRAIN / VALIDATE ONE EPOCH
-# ============================================================================
 
 def train_epoch_balanced(model, train_loader, optimizer, device, n_timesteps,
                          weight_mode='modest'):
@@ -172,7 +139,7 @@ def validate_balanced(model, val_loader, device, n_timesteps, weight_mode='modes
         for batch in val_loader:
             batch = batch.to(device)
 
-            # ── Forward pass ─────────────────────────────────────────────────
+            # Forward pass 
             predictions = model(batch, n_timesteps=n_timesteps)
             targets     = batch.y
 
@@ -189,9 +156,8 @@ def validate_balanced(model, val_loader, device, n_timesteps, weight_mode='modes
     return total_loss / len(val_loader), metrics
 
 
-# ============================================================================
 # SINGLE REPLICATE TRAINING
-# ============================================================================
+
 
 def train_single_replicate(
     replicate_id,
@@ -234,13 +200,13 @@ def train_single_replicate(
     n_timesteps  = dataloaders['metadata']['n_timepoints']
 
     if verbose:
-        print(f"\n{'='*70}")
+       
         print(f"REPLICATE {replicate_id}  (seed={seed})")
         print(f"Parameters: tau (τ), gamma (γ), rho (ρ)")
-        print(f"{'='*70}")
+       
         print(f"  Saving to: {model_filename}")
 
-    # ── Build model ───────────────────────────────────────────────────────────
+    # Build model 
     model = create_hybrid_mlp_model(config).to(device)
 
     if verbose:
@@ -250,8 +216,8 @@ def train_single_replicate(
         print(f"    fusion         : {comp['fusion']:,}")
         print(f"    temporal_decoder: {comp['temporal_decoder']:,}")
 
-    # ── Optimiser & scheduler ─────────────────────────────────────────────────
-    optimizer = optim.Adam(
+    # Optimiser & scheduler ─
+    optimizer = optim.AdamW(
         model.parameters(),
         lr=config['lr'],
         weight_decay=config['weight_decay'],
@@ -261,7 +227,7 @@ def train_single_replicate(
     )
     early_stopping = EarlyStopping(patience=config['patience'])
 
-    # ── History buffers ───────────────────────────────────────────────────────
+    # History buffers 
     history = {
         'train_loss': [], 'val_loss': [],
         'train_mae' : [], 'val_mae' : [],
@@ -276,7 +242,7 @@ def train_single_replicate(
     best_epoch   = 0
     start_time   = time.time()
 
-    # ── Training loop ─────────────────────────────────────────────────────────
+    # Training loop 
     for epoch in range(config['epochs']):
         train_loss, train_metrics = train_epoch_balanced(
             model, train_loader, optimizer, device, n_timesteps, weight_mode
@@ -356,9 +322,8 @@ def train_single_replicate(
     }, history
 
 
-# ============================================================================
 # MULTIPLE REPLICATES
-# ============================================================================
+
 
 def train_multiple_replicates(
     n_replicates, seeds, config, dataloaders, output_dir, weight_mode='modest'
@@ -381,9 +346,9 @@ def train_multiple_replicates(
         raise ValueError(f"Need {n_replicates} seeds, got {len(seeds)}")
     seeds = seeds[:n_replicates]
 
-    print("\n" + "=" * 70)
+    
     print(f"TRAINING {n_replicates} REPLICATES  ·  3-Parameter SIR (τ, γ, ρ)")
-    print("=" * 70)
+
     print(f"\n  All models → {output_dir}")
     print(f"  Seeds      : {seeds}")
     print(f"  Loss mode  : {weight_mode}")
@@ -409,18 +374,18 @@ def train_multiple_replicates(
         print(f"  Mean MAE_I: {np.mean([r['best_val_mae_i'] for r in all_results]):.2f}")
 
     overall_time = time.time() - overall_start
-    print("\n" + "=" * 70)
-    print("✓ ALL REPLICATES COMPLETE")
-    print("=" * 70)
+  
+    print("ALL REPLICATES COMPLETE")
+
     print(f"  Total time              : {overall_time/60:.2f} min")
     print(f"  Mean time per replicate : {overall_time/n_replicates/60:.2f} min")
 
     return all_results, all_histories
 
 
-# ============================================================================
+
 # STATISTICS & REPORTING
-# ============================================================================
+
 
 def compute_replicate_statistics(all_results):
     """Compute mean, std, CI across replicates for key metrics."""
@@ -539,7 +504,7 @@ def create_summary_report(all_results, stats_dict, output_dir, weight_mode):
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(report_text)
 
-    print(f"\n✓ Saved: {report_path}")
+    print(f"\nSaved: {report_path}")
     print("\n" + report_text)
 
 
@@ -587,7 +552,7 @@ def plot_replicates_comparison(all_results, all_histories, output_dir):
     out = output_dir / 'replicates_comparison.png'
     plt.savefig(out, dpi=200, bbox_inches='tight')
     plt.close()
-    print(f"✓ Saved: {out}")
+    print(f"Saved: {out}")
 
 
 
@@ -600,15 +565,15 @@ if __name__ == "__main__":
     )
     parser.add_argument('--input',        type=str,   default='epidemic_data_age_adaptive_sobol_split_augmented.pkl')
     parser.add_argument('--output_dir',   type=str,   default='replicates_outputs')
-    parser.add_argument('--n_replicates', type=int,   default=3)
+    parser.add_argument('--n_replicates', type=int,   default=5)
     parser.add_argument('--seeds',        type=str,   default=None)
     parser.add_argument('--weight_mode',  type=str,   default='modest',
-                        choices=['equal', 'modest', 'balanced'])
+                         choices=['equal', 'modest', 'balanced'])
     parser.add_argument('--epochs',       type=int,   default=50)
-    parser.add_argument('--batch_size',   type=int,   default=20)
-    parser.add_argument('--lr',           type=float, default=0.1)
-    parser.add_argument('--weight_decay', type=float, default=1e-3)
-    parser.add_argument('--patience',     type=int,   default=35)
+    parser.add_argument('--batch_size',   type=int,   default=35) #30
+    parser.add_argument('--lr',           type=float, default=0.01)
+    parser.add_argument('--weight_decay', type=float, default=1e-3) #-3
+    parser.add_argument('--patience',     type=int,   default=35) #35 early stopping parameter , help to know when to stop training, 
     args = parser.parse_args()
 
     seeds = (
@@ -616,7 +581,7 @@ if __name__ == "__main__":
         if args.seeds is not None else None
     )
 
-    # ── Model config  (no mlp_input_dim / mlp_hidden / mlp_layers) ────────────
+    # Model configurations
     config = {
         'n_params'        : 3,           # tau, gamma, rho
         'n_fourier'       : 64,
@@ -625,13 +590,13 @@ if __name__ == "__main__":
         'temporal_hidden' : 64,
         'dropout'         : 0.3,
         'n_knots'         : 12,
-        'n_timepoints'    : 50,
+        'n_timepoints'    : n_timepoints,
         'total_population': 10000,
         # training
         'epochs'          : args.epochs,
         'batch_size'      : args.batch_size,
         'lr'              : args.lr,
-        'weight_decay'    : args.weight_decay,
+        'weight_decay'    : args.weight_decay, # L2 regularization, applied through adam-optimizer, so it pernalize large weights (large weights more flexible model, risk of overfitting), This pushes weights toward zero during training, preventing a single parameter from dominating, 
         'patience'        : args.patience,
     }
 
@@ -659,9 +624,9 @@ if __name__ == "__main__":
     )
 
     # ── Summary statistics ────────────────────────────────────────────────────
-    print("\n" + "=" * 70)
+  
     print("SUMMARY STATISTICS")
-    print("=" * 70)
+
 
     stats_dict = compute_replicate_statistics(all_results)
 
@@ -674,11 +639,10 @@ if __name__ == "__main__":
 
     df = pd.DataFrame(all_results)
     df.to_csv(Path(args.output_dir) / 'replicates_results.csv', index=False)
-    print(f"✓ Saved: {Path(args.output_dir) / 'replicates_results.csv'}")
+    print(f"Saved: {Path(args.output_dir) / 'replicates_results.csv'}")
 
-    print("\n" + "=" * 70)
-    print("✓ TRAINING COMPLETE")
-    print("=" * 70)
+    print(" TRAINING COMPLETE")
+   
     print(f"\n  Mean R²    : {stats_dict['best_val_r2']['mean']:.4f}"
           f" ± {stats_dict['best_val_r2']['std']:.4f}")
     print(f"  Mean MAE_I : {stats_dict['best_val_mae_i']['mean']:.2f}"
@@ -686,4 +650,4 @@ if __name__ == "__main__":
     print(f"  CV         : {stats_dict['best_val_mae_i']['cv']:.2f}%")
     print(f"\n  Validate   : python step4_validate_SIR3param.py --models_dir {args.output_dir}")
     print(f"  Test       : python step5_test_SIR3param.py --models_dir {args.output_dir}")
-    print("=" * 70)
+  

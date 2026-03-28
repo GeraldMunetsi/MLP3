@@ -84,7 +84,7 @@ if __name__ == "__main__":
     print(f"  Test:  {len(split_data['test']['simulations'])}")
     
     if args.output is None:
-        output_path = Path(args.input).parent / (Path(args.input).stem + '_split.pkl')
+        output_path = Path(args.input).parent / (Path(args.input).stem + '_split_augmented.pkl') # although i did not augment data, i wanted this script to alighn with other scripts 
     else:
         output_path = Path(args.output)
     

@@ -20,11 +20,10 @@ PARAM_NAMES = ['tau', 'gamma', 'rho']
 
 # Fixed parameter space 
 PARAM_RANGES = {
-    'tau'  : (0.001, 0.9),
-    'gamma': (0.01, 0.80),
+    'tau'  : (0.0024, 0.034),  # Expected range: R₀ ∈ [0.12, 4.98] #   recovery rate
+    'gamma': (0.07,  1),  # Infectious period 2-10 days
     'rho'  : (0.001, 0.010),
 }
-
 
 # BA NETWORK STATISTICS  (computed once, cached)
 
@@ -104,7 +103,7 @@ def generate_network(N=N, m=m, seed=42):
 # SIR SIMULATION
 
 def run_sir_replicates(G, tau, gamma, rho,
-                        n_replicates=5, tmax=20, n_timepoints=50):
+                        n_replicates=5, tmax=50, n_timepoints=100):
     """
     Run n_replicates stochastic SIR simulations and average their outputs.
 
@@ -167,7 +166,7 @@ def run_sir_replicates(G, tau, gamma, rho,
         }
 
 
-def run_batch(G, params_array, n_replicates=5, tmax=20, n_timepoints=50):
+def run_batch(G, params_array, n_replicates=5, tmax=50, n_timepoints=100):
     """
     Simulate a batch of parameter sets and return a list of result dicts.
 
@@ -210,8 +209,8 @@ def generate_dataset(
     n_replicates=5,
     N=N,
     m=m,
-    tmax=20,
-    n_timepoints=50,
+    tmax=50,
+    n_timepoints=100,
 ):
     """
     Build the full training dataset via two-phase adaptive Sobol sampling.
@@ -349,11 +348,11 @@ if __name__ == "__main__":
         )
     )
     # Sampling strategy
-    parser.add_argument('--initial_samples', type=int, default=1500,
+    parser.add_argument('--initial_samples', type=int, default=820,
                         help='Random samples(default: 500)')
     parser.add_argument('--batch_size',type=int, default=32,
                         help='New samples per adaptive round  (default: 32)')
-    parser.add_argument('--n_replicates', type=int, default=5,
+    parser.add_argument('--n_replicates', type=int, default=3,
                         help='Stochastic replicates per set (default: 5)')
     # Network
     parser.add_argument('--N',type=int,   default=10000,
@@ -363,7 +362,7 @@ if __name__ == "__main__":
     # Simulation
     parser.add_argument('--tmax',type=float, default=20.0,
                         help='Simulation end time (default: 20)')
-    parser.add_argument('--n_timepoints',type=int,default=50,
+    parser.add_argument('--n_timepoints',type=int,default=100,
                         help='Output time resolution(default: 50)')
     # Output
     parser.add_argument('--output',type=str,

@@ -5,9 +5,9 @@ Adaptive Sobol data generation for the 3-parameter SIR emulator.
 
 Parameters
 ----------
-    tau   (τ)  – per-contact transmission rate
-    gamma (γ)  – recovery rate
-    rho   (ρ)  – initial infected seed fraction
+    tau   (τ)   per-contact transmission rate
+    gamma (γ)   recovery rate
+    rho   (ρ)   initial infected seed fraction
 
 Epidemic threshold (Barabasi-Albert network)
 ---------------------------------------------
@@ -31,25 +31,20 @@ from tqdm import tqdm
 
 
 # GLOBAL CONSTANTS
-
+n_timepoints=400
 N = 10000   # network size (nodes)
-m = 2       # Barabasi-Albert attachment parameter
-
+m =5      # Barabasi-Albert attachment parameter
 PARAM_NAMES = ['tau', 'gamma', 'rho']
 
-# Fixed parameter space — edit these values if you need different ranges
-#Ro=1 should sit inside the space.
-#We need to
+
 PARAM_RANGES = {
-    'tau'  : (0.001, 0.15),    # was 0.9 — reduced dramatically
-    'gamma': (0.01,  0.50),    # mild reduction
-    'rho'  : (0.001, 0.010),   # unchanged
-}
+    'tau'  : (0.0024, 0.017),  # Expected range: R₀ ∈ [0.12, 4.98] #   recovery rate
+    'gamma': (0.07,  0.5),  # Infectious period 2-10 days
+    'rho'  : (0.001, 0.010),
+},
 
 
-# ============================================================================
 # BA NETWORK STATISTICS  (computed once, cached)
-# ============================================================================
 
 _NETWORK_STATS_CACHE = {}
 
@@ -96,9 +91,9 @@ def get_ba_network_stats(N=N, m=m, seed=42):
     return _NETWORK_STATS_CACHE[cache_key]
 
 
-# ============================================================================
+
 # SOBOL SAMPLING  (d = 3)
-# ============================================================================
+
 
 def generate_sobol_samples(n_samples, seed=42, scramble=True):
     """
@@ -158,7 +153,7 @@ def _sobol_candidates(n_candidates=4098, seed=None):
         idx  = np.linspace(0, n_pow2 - 1, n_candidates, dtype=int)
         unit = unit[idx]
 
-    candidates = np.zeros_like(unit)
+    candidates =np.zeros_like(unit)
     for i, name in enumerate(PARAM_NAMES):
         lo, hi            = PARAM_RANGES[name]
         candidates[:, i]  = unit[:, i] * (hi - lo) + lo
@@ -166,9 +161,9 @@ def _sobol_candidates(n_candidates=4098, seed=None):
     return candidates
 
 
-# ============================================================================
+
 # ADAPTIVE SELECTION  (R0-aware)
-# ============================================================================
+
 
 def estimate_errors(simulations, N=N, m=m):
     """
@@ -208,9 +203,9 @@ def estimate_errors(simulations, N=N, m=m):
     net    = get_ba_network_stats(N=N, m=m)
     R0     = (candidates[:, 0] / candidates[:, 1]) * net['ratio']
 
-    near   = (R0 > 0.5) & (R0 < 1.5)
+    near   = (R0 >=0.8) & (R0 <= 1.2)
     print(f"  Candidate R0 range  : [{R0.min():.2f}, {R0.max():.2f}]")
-    print(f"  Near R0=1 (0.5-1.5) : {near.sum()} ({100*near.mean():.1f}%)")
+    print(f"  Near R0=1 (0.8-1.2) : {near.sum()} ({100*near.mean():.1f}%)")
 
     # Gaussian weight — peak at R0=1, decays away from threshold
     threshold_weight = np.exp(-8* (R0 - 1) ** 2)
@@ -277,9 +272,9 @@ def select_next_samples(existing_sims, n_new, percentile=75, N=N, m=m):
     return np.array(selected)
 
 
-# ============================================================================
+
 # NETWORK GENERATION
-# ============================================================================
+
 
 def generate_network(N=N, m=m, seed=42):
     """Build the Barabasi-Albert network and warm the stats cache."""
@@ -290,17 +285,16 @@ def generate_network(N=N, m=m, seed=42):
     return G
 
 
-# ============================================================================
-# SIR SIMULATION
-# ============================================================================
 
-def run_sir_replicates(G, tau, gamma, rho,
-                        n_replicates=5, tmax=20, n_timepoints=50):
+# SIR SIMULATION
+
+
+def run_sir_replicates(G, tau, gamma, rho,n_replicates=3, tmax=50, n_timepoints=n_timepoints):
     """
     Run n_replicates stochastic SIR simulations and average their outputs.
 
     Why average replicates?
-    -----------------------
+    -----------------------git remote add origin https://github.com/GeraldMunetsi/MLP3.git
     Near R0 = 1 the SIR process is highly stochastic — two runs with
     identical parameters can produce very different I(t) curves due to
     random transmission events. Averaging n_replicates runs reduces this
@@ -355,7 +349,7 @@ def run_sir_replicates(G, tau, gamma, rho,
         }
 
 
-def run_batch(G, params_array, n_replicates=5, tmax=20, n_timepoints=50):
+def run_batch(G, params_array, n_replicates=5, tmax=120, n_timepoints=n_timepoints):
     """
     Simulate a batch of parameter sets and return a list of result dicts.
 
@@ -387,9 +381,9 @@ def run_batch(G, params_array, n_replicates=5, tmax=20, n_timepoints=50):
     return results
 
 
-# ============================================================================
+
 # MAIN DATASET GENERATION LOOP
-# ============================================================================
+
 
 def generate_dataset(
     initial_samples=100,
@@ -399,7 +393,7 @@ def generate_dataset(
     N=N,
     m=m,
     tmax=20,
-    n_timepoints=50,
+    n_timepoints=n_timepoints, #
 ):
     """
     Build the full training dataset via two-phase adaptive Sobol sampling.
@@ -420,11 +414,11 @@ def generate_dataset(
     """
     total = initial_samples + batch_size * n_rounds
 
-    print("=" * 70)
+  
     print("STEP 1 — SIR DATA GENERATION")
     print("3-Parameter model: tau, gamma, rho")
     print("R0 = tau/gamma x <k2>/<k>")
-    print("=" * 70)
+
     print(f"\n  Parameter ranges (fixed in PARAM_RANGES):")
     for name in PARAM_NAMES:
         lo, hi = PARAM_RANGES[name]
@@ -442,9 +436,9 @@ def generate_dataset(
     G = generate_network(N=N, m=m)
 
     # Phase 1 — Initial Sobol
-    print("\n" + "=" * 70)
+  
     print(f"PHASE 1 — INITIAL SOBOL  ({initial_samples} samples)")
-    print("=" * 70)
+   
 
     all_sims = run_batch(
         G, generate_sobol_samples(initial_samples),
@@ -483,12 +477,12 @@ def generate_dataset(
     #Quality check , did my sampler work?  
 
 
-    n_thresh = ((R0_arr > 0.5) & (R0_arr < 1.5)).sum() #
+    n_thresh = ((R0_arr > 0.8) & (R0_arr < 1.2)).sum() #
     print(f"\n  R0 distribution  (R0 = tau/gamma x <k2>/<k>):")
     print(f"    min  = {R0_arr.min():.2f}")
     print(f"    max  = {R0_arr.max():.2f}")
     print(f"    mean = {R0_arr.mean():.2f}")
-    print(f"    Near R0=1 (0.5-1.5): {n_thresh} "
+    print(f"    Near R0=1 (0.8-1.2): {n_thresh} "
           f"({100*n_thresh/len(all_sims):.1f}%)  <- adaptive focus")
 
     return {
@@ -550,9 +544,9 @@ def save_dataset(dataset, filepath):
     print(f"    step3_train_SIR3param.py  model training")
 
 
-# ============================================================================
+
 # ENTRY POINT
-# ============================================================================
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -563,9 +557,9 @@ if __name__ == "__main__":
         )
     )
     # Sampling strategy
-    parser.add_argument('--initial_samples', type=int, default=100,
+    parser.add_argument('--initial_samples', type=int, default=500,
                         help='Initial Sobol samples (default: 500)')
-    parser.add_argument('--batch_size', type=int, default=50,
+    parser.add_argument('--batch_size', type=int, default=32,
                         help='New samples per adaptive round  (default: 32)')
     parser.add_argument('--n_rounds', type=int, default= 10,
                         help='Number of adaptive rounds       (default: 10)')
@@ -574,15 +568,15 @@ if __name__ == "__main__":
     # Network
     parser.add_argument('--N',type=int,  default=10000,
                         help='Network size (default: 10000)')
-    parser.add_argument('--m', type=int,default=2,
+    parser.add_argument('--m', type=int,default=5,
                         help='BA attachment parameter (default: 5)')
     # Simulation
-    parser.add_argument('--tmax',type=float, default=20.0,
-                        help='Simulation end time(default: 20)')
-    parser.add_argument('--n_timepoints',type=int,  default=50,
+    parser.add_argument('--tmax',type=float, default=50.0,
+                        help='Simulation end time(default: 120)')
+    parser.add_argument('--n_timepoints',type=int,  default=n_timepoints,
                         help='Output time resolution(default: 50)')
     # Output
-    parser.add_argument('--output',          type=str,
+    parser.add_argument('--output', type=str,
                         default='epidemic_data_age_adaptive_sobol.pkl',
                         help='Output filename')
 

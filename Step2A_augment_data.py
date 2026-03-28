@@ -68,7 +68,7 @@ class EpidemicAugmenterSIR:
         self,
         param_noise_std: float = 0.013,
         compartment_noise_std: float = 0.01,
-        n_param_augment: int = 2,
+        n_param_augment: int = 4,
         n_compartment_augment: int = 1,
         param_ranges: dict = None,
     ):
@@ -88,9 +88,9 @@ class EpidemicAugmenterSIR:
 
         # Default ranges match PARAM_RANGES in step1
         self.param_ranges = param_ranges or {
-        'tau'  : (0.001, 0.15),    # was 0.9 — reduced dramatically
-        'gamma': (0.01,  0.50),    # mild reduction
-        'rho'  : (0.001, 0.010),
+         'tau'  : (0.0024, 0.05),  # Expected range: R₀ ∈ [0.12, 4.98] #   recovery rate
+         'gamma': (0.07,  0.5),  # Infectious period 2-10 days
+         'rho'  : (0.001, 0.010),
     }
 
     # ── Public method 
@@ -247,7 +247,7 @@ def augment_split_dataset(
         print(f"\n  Warning: network is {type(network)}, regenerating ...")
         import networkx as nx
         _N = split_data['metadata'].get('total_population', 10000)
-        _m = split_data['metadata'].get('m', 2)
+        _m = split_data['metadata'].get('m', 5)
         network = {'graph': nx.barabasi_albert_graph(_N, _m, seed=42),
                    'N': _N, 'm': _m}
 
@@ -364,7 +364,7 @@ if __name__ == "__main__":
                         help='Param noise std(default: 0.013)')
     parser.add_argument('--compartment_noise', type=float, default=0.01,
                         help='Compartment noise std (default: 0.01)')
-    parser.add_argument('--n_param_aug',type=int, default=2,
+    parser.add_argument('--n_param_aug',type=int, default=8,
                         help='Param-noised copies/sim(default: 2)')
     parser.add_argument('--n_comp_aug',type=int,default=1,
                         help='Compartment copies/sim (default: 1)')
@@ -373,10 +373,8 @@ if __name__ == "__main__":
     parser.add_argument('--augment_test',  action='store_true', default=False)
     args = parser.parse_args()
 
-    print("\n" + "=" * 70)
+
     print("STEP 2A — DATA AUGMENTATION")
-    print("3-Parameter SIR: tau, gamma, rho")
-    print("=" * 70)
 
     # Load split dataset
     print(f"\nLoading: {args.input}")
@@ -439,13 +437,4 @@ if __name__ == "__main__":
     csv_path = output_path.with_suffix(".csv")
     export_split_to_csv(augmented, csv_path, split_name="train")
 
-    print("\n" + "=" * 70)
-    print("DONE")
-    print("=" * 70)
-    print(f"\nPipeline:")
-    print(f"  1.  step1_generate_data_SIR3param.py")
-    print(f"  2.  step2_split_data.py          ->  {Path(args.input).name}")
-    print(f"  2A. step2A_augment_data_SIR3param.py  ->  {output_path.name}")
-    print(f"  3.  python step3_train_SIR3param.py --input {output_path}")
-    print(f"  4.  python step4_validate_SIR3param.py")
-    print(f"  5.  python step5_test_SIR3param.py")
+   

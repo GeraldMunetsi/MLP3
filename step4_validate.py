@@ -1,15 +1,3 @@
-"""
-step4_validate_SIR3param.py
-============================
-Validation script for the 3-parameter SIR emulator.
-
-Parameters:
-    tau   - transmission rate
-    gamma - recovery rate
-    rho   - network rewiring / contact heterogeneity
-
-Age-structured code has been fully removed.
-"""
 
 import torch
 import numpy as np
@@ -20,13 +8,12 @@ import json
 from scipy import stats
 import pandas as pd
 
-from step0_model import create_hybrid_mlp_model          # your hybrid architecture
-from utils_SIR   import create_dataloaders, compute_metrics, get_device   # renamed utils
+from step0_model import create_hybrid_mlp_model          
+from utils_SIR   import create_dataloaders, compute_metrics, get_device, PARAM_MINS, PARAM_MAXS
 
 
-# ============================================================================
+
 # CONSTANTS
-# ============================================================================
 
 PARAM_NAMES   = ['tau', 'gamma', 'rho']          # 3-parameter SIR
 N_PARAMS      = 3
@@ -67,7 +54,7 @@ def load_model(model_path, device):
             'temporal_hidden': 64,
             'dropout'        : 0.3,
             'n_knots'        : 12,
-            'n_timepoints'   : 50,
+            'n_timepoints'   : 50,#
             'total_population': 10000,
         }
 
@@ -121,7 +108,7 @@ def evaluate_model(model, val_loader, device, n_timesteps):
     Returns:
         predictions : Tensor [N, T, 3]
         targets     : Tensor [N, T, 3]
-        params      : Tensor [N, 3]   → (tau, gamma, rho)
+        params      : Tensor [N, 3]   → raw (tau, gamma, rho) denormalised
         metrics     : dict
     """
     model.eval()
@@ -141,7 +128,12 @@ def evaluate_model(model, val_loader, device, n_timesteps):
 
             all_predictions.append(predictions.cpu())
             all_targets.append(targets.cpu())
-            all_params.append(batch.params.cpu())
+            # Denormalise params_norm [0,1] → raw (tau, gamma, rho) for plotting
+            params_norm_cpu = batch.params_norm.cpu() #batch.params_norm is expected to be normalized between 0 and 1 #So the model does not need raw tau, gamma, rho — it expects normalized values.
+            param_mins_t    = torch.tensor(PARAM_MINS)
+            param_maxs_t    = torch.tensor(PARAM_MAXS)
+            params_raw      = params_norm_cpu * (param_maxs_t - param_mins_t) + param_mins_t
+            all_params.append(params_raw)
 
     predictions = torch.cat(all_predictions, dim=0)
     targets     = torch.cat(all_targets,     dim=0)
@@ -276,7 +268,7 @@ def plot_training_curves(results_list, models_dir, output_dir):
     histories  = load_training_histories(models_dir)
 
     if histories is None or all(h is None for h in histories):
-        print("  ⚠  Training histories not found — skipping training-curves plot.")
+        print("   Training histories not found — skipping training-curves plot.")
         return
 
     from matplotlib.gridspec import GridSpec
@@ -805,23 +797,22 @@ if __name__ == "__main__":
     print("\n3. Validation summary statistics...")
     plot_validation_summary(results_list, stats_dict, output_dir)
 
-    # ── Save results ──────────────────────────────────────────────────────────
-    print("\n" + "=" * 70)
+    # Save results 
+  
     print("SAVING RESULTS")
-    print("=" * 70 + "\n")
+   
 
     save_results(results_list, stats_dict, args.output_dir)
 
-    print("\n" + "=" * 70)
-    print("✓ VALIDATION COMPLETE")
-    print("=" * 70)
+   
+    print(" VALIDATION COMPLETE")
     print(f"\nResults saved to : {args.output_dir}")
-    print(f"\n  Key files:")
-    print(f"    · VALIDATION_REPORT.txt          (read this first)")
-    print(f"    · validation_results.csv         (spreadsheet)")
-    print(f"    · validation_results.json        (machine-readable)")
+    print(f"\n Key files:")
+    print(f"· VALIDATION_REPORT.txt (read this first)")
+    print(f"· validation_results.csv         (spreadsheet)")
+    print(f"· validation_results.json        (machine-readable)")
     print(f"\n  Plots:")
-    print(f"    · training_curves_all_replicates.png")
+    print(f" · training_curves_all_replicates.png")
     print(f"    · predictions_all_replicates.png")
     print(f"    · validation_summary.png")
     print(f"\n  Run command:")
