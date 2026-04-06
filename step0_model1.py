@@ -26,53 +26,9 @@ import torch.nn.functional as F
 import numpy as np
 from scipy.interpolate import BSpline
 
-
-# 1. STANDARD FOURIER FEATURES (the basic)
-# Creating the frequency matrix (W) myself (not randomly sampling fron Gausian, more interpretable, )
-#So I have tried different ways to create W :
-#For example  W = base_frequency * torch.stack([k,k**2,k**3], dim=1) with normilization :  W = W / W.norm(dim=1, keepdim=True)
-#Another example :  W = base_frequency * torch.stack([k,k**2,k**4], dim=1), with normilization :  W = W / W.norm(dim=1, keepdim=True)
-#Still not producing good results when i train the model.
-#Please advise  
-# class StandardFourierFeatures(nn.Module):
-#     """
-#     Standard (deterministic) Fourier Features.
-
-#     Frequencies are fixed harmonics rather than random samples.
-
-#     Maps:
-#         (batch, n_params) to (batch, 2 × n_fourier)
-#     """
-
-#     def __init__(self, n_params=3, n_fourier=64, base_frequency=3): # base_frequency rescales W to control the frequency of oscillations in the embedding:
-
-#         # Deterministic frequency indices
-#         k = torch.arange(1, n_fourier + 1).float() # k indices
-
-#         # deterministic frequency matrix
-#         W = torch.zeros(n_fourier, 3)
-     
-#         W[:,0] = k        
-#         W[:,1] = 2*k     
-#         W[:,2] = 4*k   
-#         W = W / W.norm(dim=1, keepdim=True) # normilizatrion
-#         W = base_frequency * W # multipying the frequency matrix with the base frequence
-        
-#         # Register as non-trainable buffer
-#         self.register_buffer("W", W)
-
-#         self.output_dim = 2 * n_fourier # 128 cosine and sine embeddings that i have included in phi
-
-# #Second Option
-#Standard Random Fourier features
-#Sampling from the frequency Matrix W from Gaussion distribution
-# Critically, because each row of W is an independent random vector in ℝ³, the projection z_k = τ·w₁ + γ·w₂ + ρ·w₃ assigns genuinely distinct weights to all three parameters at every frequency, enabling the embedding to represent the multiplicative interaction τ/γ that determines R₀ — something no additive deterministic frequency scheme can achieve without explicit cross-parameter interaction terms
-# Working well!
-
-
 timepoints=80
 N=100000
-knots=6
+knots=5
 class StandardRFF(nn.Module):
     def __init__(self, n_params=3, n_fourier=64, sigma=1.0):
         super().__init__()
@@ -170,103 +126,72 @@ class TemporalDecoder(nn.Module):
     """
     def __init__(
         self,
-        latent_dim     : int,
-        n_knots        : int   = knots,
-        total_population: int  = N,
-        hidden_dim     : int   = 64,
+        latent_dim      : int,
+        n_knots         : int = knots,
+        total_population: int = N,
+        hidden_dim      : int = 64,
     ):
         super().__init__()
-        self.N             = float(total_population)
-        self.n_knots       = n_knots
-        self.n_timepoints  = timepoints
+        self.N            = float(total_population)
+        self.n_knots      = n_knots
+        self.n_timepoints = timepoints
 
-        # S decoder 
-        # Predicts (n_knots - 1) retention rates (first rate is always 1.0)
+        # S decoder: predicts K-1 retention rates → monotone decreasing S(t)
         self.predict_S_retention = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, n_knots - 1),
         )
 
-        # g(t) decoder 
-        # Predicts (n_knots - 1) free coefficients; first is pinned to 8.0
-        self.predict_g_coeffs = nn.Sequential(
+        # R decoder: predicts K-1 retention rates → monotone increasing R(t)
+        self.predict_R_rates = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, n_knots), # i removed 1
+            nn.Linear(hidden_dim, n_knots - 1),
         )
 
-        # B-spline layers (shared basis) 
+        # B-spline layers — one per compartment
         self.spline_S = BSplineLayer(n_knots, timepoints)
-        self.spline_g = BSplineLayer(n_knots, timepoints)
+        self.spline_R = BSplineLayer(n_knots, timepoints)
 
-    def forward(self, z: torch.Tensor, rho_raw: torch.Tensor) -> tuple: 
-        """
-        Args:
-            z       : (batch, latent_dim)  — from fusion MLP
-            rho_raw : (batch,)             — raw ρ ∈ [0.001, 0.010] # just my rho range
 
-        Returns:
-            S_pred, I_pred, R_pred  each (batch, n_timepoints)
-        """
+    def forward(self, z: torch.Tensor, rho_raw: torch.Tensor) -> tuple:
         batch_size = z.size(0)
         device     = z.device
 
-        # S₀/S(0) = N·(1-ρ) 
-        S_0 = ((1.0 - rho_raw) * self.N).unsqueeze(1)   # (batch, 1)
+        # ── S(t): monotone decreasing ─────────────────────────────────────────
+        S_0 = ((1.0 - rho_raw) * self.N).unsqueeze(1)       # (batch, 1)
 
-        # S: monotone-decreasing spline 
-        # retention_rates ∈ (0,1) — each is the fraction of S remaining
-        retention_raw   = self.predict_S_retention(z)         # (batch, n_knots-1)
-        retention_rates = torch.sigmoid(retention_raw)         # (0,1)
+        retention_raw   = self.predict_S_retention(z)        # (batch, K-1)  ← Bug 2 fix
+        retention_rates = torch.sigmoid(retention_raw)       # ∈ (0, 1)
 
-        # First rate = 1.0 (S starts at S₀, no drop at t=0)
-        ones        = torch.ones(batch_size, 1, device=device)
-        all_rates   = torch.cat([ones, retention_rates], dim=1)  # (batch, n_knots)
+        ones_S    = torch.ones(batch_size, 1, device=device)
+        all_rates = torch.cat([ones_S, retention_rates], dim=1)  # (batch, K)  ← Bug 1 fix
 
-        # Cumulative product: S_coeffs[k] = S₀ × r₁ × ... × rₖ
-        # All coefficients ≤ S₀, monotone decreasing
-        cum_product = torch.cumprod(all_rates, dim=1)            # (batch, n_knots)
-        S_coeffs    = S_0 * cum_product                          # (batch, n_knots)
-        S_pred      = self.spline_S(S_coeffs)                    # (batch, T)
-        g_free      = self.predict_g_coeffs(z)                   # (batch, n_knots-1)
-        #g_coeff_0   = torch.full((batch_size, 1), 8.0, device=device)
-        g_coeffs, _ = torch.sort(g_free, dim=1, descending=True) # largest → index 0
+        cum_product = torch.cumprod(all_rates, dim=1)        # (batch, K), decreasing
+        S_coeffs    = S_0 * cum_product                      # (batch, K)
+        S_pred      = self.spline_S(S_coeffs)                # (batch, T)
 
+        # ── f(t) = R(t)/(N−S(t)): monotone increasing ────────────────────────
+        r_raw = self.predict_R_rates(z)                      # (batch, K-1)  ← Bug 4 fix
+        r     = torch.sigmoid(r_raw)                         # ∈ (0, 1)
 
+        ones_R = torch.ones(batch_size, 1, device=device)
+        all_r  = torch.cat([ones_R, r], dim=1)               # (batch, K)
 
+        cum_r    = torch.cumprod(all_r, dim=1)               # (batch, K), decreasing ∈ (0,1]
+        f_coeffs = 1.0 - cum_r                               # (batch, K), increasing ∈ [0,1)
+        f_t      = self.spline_R(f_coeffs)                   # (batch, T), monotone increasing
 
-       
+        # ── I and R from conservation ─────────────────────────────────────────
+        ever_infected = self.N - S_pred                      # ≥ 0 always
 
-        #Why did i choose the value 8
-        # g(t): fraction of ever-infected still infectious
-        #Recall I(t) = (N - S(t)) · g(t), R(t) = (N - S(t)) · (1 - g(t))
-        # At t=0, I(0) = N·ρ  (only the seed fraction is infected),R(0) = 0          (nobody has recovered yet)
-        # At t=0, R(0) = (N - S₀) · (1 - g(0)) = 0
-        #Since (N - S₀) = N·ρ > 0 always, the only way R(0)=0 is satisfied is if:
-        # g(0) = 1   exactly
-        # g is not the raw spline output, g(t) = sigmoid(h(t))
-        # so pinning to 1.0 would give me , g(0) = sigmoid(1.0) = 0.731 thus R(0) ≠ 0
-        # So i need  c such that sigmoid(c) ≈ 1
-        # so i choose c=8 then sigmoid(8.0) = 0.999999979 
-        #R(0) = (N·ρ) · (1 - 0.9997)= 50 · 0.0003 = 0.00000105 people , basically zero
+        R_pred = ever_infected * f_t                         # (batch, T) ≥ 0, monotone ↑
+        I_pred = ever_infected * (1.0 - f_t)                 # (batch, T) ≥ 0, bell-shaped
 
-
-        #g_coeffs    = torch.cat([g_coeff_0, g_free], dim=1)      # (batch, n_knots)
-        g_spline    = self.spline_g(g_coeffs)                    # (batch, T)
-        g           = torch.sigmoid(g_spline)                    # (0,1) strict
-
-        # I and R from conservation 
-        # N - S(t) = everyone who has ever left S = I(t) + R(t)
-        ever_infected = self.N - S_pred                          # ≥ 0 always
-
-        I_pred = ever_infected * g                               # (batch, T) ≥ 0
-        R_pred = ever_infected * (1.0 - g)                      # (batch, T) ≥ 0
-
-        # Conservation check :
-        # S_pred + I_pred + R_pred = S + (N-S)·g + (N-S)·(1-g) = S + (N-S)·1 = N  
-
+        # S + I + R = S + (N-S)·f + (N-S)·(1-f) = S + (N-S) = N  ✓
         return S_pred, I_pred, R_pred
+    
 
     # def forward(self, z: torch.Tensor, rho_raw: torch.Tensor) -> tuple:
     #     """

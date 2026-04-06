@@ -29,8 +29,8 @@ from torch.utils.data import Dataset, DataLoader
 
 
 
-PARAM_MINS = np.array([0.0024, 0.07,  0.001], dtype=np.float32)   # [tau, gamma, rho]
-PARAM_MAXS = np.array([0.05,  0.5,  0.010], dtype=np.float32)
+PARAM_MINS = np.array([0.0005, 0.007,  0.001], dtype=np.float32)   # [tau, gamma, rho]
+PARAM_MAXS = np.array([0.024,  0.5,  0.010], dtype=np.float32)
 
 
 def normalise_params(params_raw: np.ndarray) -> np.ndarray:

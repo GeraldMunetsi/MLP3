@@ -8,10 +8,13 @@ import json
 from scipy import stats
 import pandas as pd
 
-from step0_model import create_hybrid_mlp_model          
-from utils_SIR   import create_dataloaders, compute_metrics, get_device, PARAM_MINS, PARAM_MAXS
+from step0_model1 import create_hybrid_mlp_model          
+from utils_SIR import create_dataloaders, compute_metrics, get_device, PARAM_MINS, PARAM_MAXS
 
-
+n_timepoints = 80
+N=100000
+knots=5
+ 
 
 # CONSTANTS
 
@@ -21,9 +24,9 @@ COMPARTMENTS  = ['Susceptible (S)', 'Infected (I)', 'Recovered (R)']
 COMP_COLORS   = ['lightblue', 'lightcoral', 'lightgreen']
 
 
-# ============================================================================
+
 # MODEL LOADING
-# ============================================================================
+
 
 def load_model(model_path, device):
     """
@@ -39,32 +42,84 @@ def load_model(model_path, device):
     """
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
-    # ── Config ─────────────────────────────────────────────────────────────
+    # # Config 
+    # if 'config' in checkpoint:
+    #     config = checkpoint['config']
+    # else:
+    #     # Minimal default config for 3-parameter SIR model
+    #     config = {
+    #         'n_params'       : N_PARAMS,     # tau, gamma, rho
+    #         'n_fourier'      : 64,
+    #         'fourier_hidden' : 32,
+    #         'param_hidden'   : 16,
+    #         'mlp_hidden'     : 32,
+    #         'mlp_layers'     : 2,
+    #         'temporal_hidden': 64,
+    #         'dropout'        : 0.3,
+    #         'n_knots'        : knots,
+    #         'n_timepoints'   : n_timepoints,
+    #         'total_population': N,
+    #     }
+    # # ── Inject t_grid if checkpoint predates its addition 
+    # state_dict = checkpoint['model_state_dict']
+    # if 'temporal_decoder.t_grid' not in state_dict:
+    #     state_dict['temporal_decoder.t_grid'] = torch.linspace(0.0, 1.0, n_timepoints)
+    
+    # model = create_hybrid_mlp_model(config)
+    # #model.load_state_dict(checkpoint['model_state_dict'])
+    # model.load_state_dict(state_dict, strict=True)
+    # model = model.to(device)
+    # model.eval()
+
+    # return model, checkpoint
+
+    def load_model(model_path, device):
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+
     if 'config' in checkpoint:
         config = checkpoint['config']
     else:
-        # Minimal default config for 3-parameter SIR model
         config = {
-            'n_params'       : N_PARAMS,     # tau, gamma, rho
-            'n_fourier'      : 64,
-            'fourier_hidden' : 32,
-            'param_hidden'   : 16,
-            'mlp_hidden'     : 32,
-            'mlp_layers'     : 2,
-            'temporal_hidden': 64,
-            'dropout'        : 0.3,
-            'n_knots'        : 12,
-            'n_timepoints'   : 50,#
-            'total_population': 10000,
+            'n_params'        : N_PARAMS,
+            'n_fourier'       : 64,
+            'fourier_hidden'  : 32,
+            'param_hidden'    : 16,
+            'mlp_hidden'      : 32,
+            'mlp_layers'      : 2,
+            'temporal_hidden' : 64,
+            'dropout'         : 0.3,
+            'n_knots'         : knots,
+            'n_timepoints'    : n_timepoints,
+            'total_population': N,
         }
 
+    state_dict = checkpoint['model_state_dict']
+
+    # Checkpoint was saved with weight-function forward (had t_grid buffer).
+    # Current model uses sort-based forward — no t_grid needed. Drop it.
+    state_dict.pop('temporal_decoder.t_grid', None)
+
+    # Checkpoint was saved with old g_coeff pinning (n_knots-1 output).
+    # Current model outputs n_knots. Pad with a zero row if needed.
+    g_w_key = 'temporal_decoder.predict_g_coeffs.2.weight'
+    g_b_key = 'temporal_decoder.predict_g_coeffs.2.bias'
+    expected_n_knots = config.get('n_knots', knots)
+
+    if g_w_key in state_dict:
+        actual_out = state_dict[g_w_key].shape[0]
+        if actual_out == expected_n_knots - 1:
+            pad_w = torch.zeros(1, state_dict[g_w_key].shape[1])
+            pad_b = torch.zeros(1)
+            state_dict[g_w_key] = torch.cat([state_dict[g_w_key], pad_w], dim=0)
+            state_dict[g_b_key] = torch.cat([state_dict[g_b_key], pad_b], dim=0)
+            print(f"  [COMPAT] Padded predict_g_coeffs to n_knots={expected_n_knots}")
+
     model = create_hybrid_mlp_model(config)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(state_dict, strict=True)
     model = model.to(device)
     model.eval()
 
     return model, checkpoint
-
 
 def find_replicate_models(models_dir):
     """
@@ -94,9 +149,9 @@ def find_replicate_models(models_dir):
     return model_files
 
 
-# ============================================================================
+
 # EVALUATION
-# ============================================================================
+
 
 def evaluate_model(model, val_loader, device, n_timesteps):
     """
@@ -121,7 +176,7 @@ def evaluate_model(model, val_loader, device, n_timesteps):
         for batch in val_loader:
             batch = batch.to(device)
 
-            # ── Forward pass (no graph_stats, no age dummy) ────────────────
+            #forward pass
             predictions = model(batch, n_timesteps=n_timesteps)
 
             targets = batch.y
@@ -196,9 +251,9 @@ def evaluate_all_replicates(models_dir, val_loader, device, n_timesteps):
     return results_list, targets, params
 
 
-# ============================================================================
+
 # AGGREGATE STATISTICS
-# ============================================================================
+
 
 def compute_aggregate_statistics(results_list):
     """
@@ -236,9 +291,9 @@ def compute_aggregate_statistics(results_list):
     return stats_dict
 
 
-# ============================================================================
+
 # VISUALISATION
-# ============================================================================
+
 
 def load_training_histories(models_dir):
     """Load training_history_*.npy files (one per replicate)."""
@@ -380,7 +435,7 @@ def plot_training_curves(results_list, models_dir, output_dir):
     out_path = output_dir / 'training_curves_all_replicates.png'
     plt.savefig(out_path, dpi=200, bbox_inches='tight')
     plt.close()
-    print(f"✓ Saved: {out_path}")
+    print(f" Saved: {out_path}")
 
 
 def plot_prediction_samples(results_list, targets, params, output_dir, n_samples=6):
@@ -720,15 +775,15 @@ def save_results(results_list, stats_dict, output_dir):
 
     report_text = "\n".join(lines)
     report_path = output_dir / 'VALIDATION_REPORT.txt'
-    with open(report_path, 'w') as f:
+    with open(report_path, 'w', encoding="utf-8") as f:
         f.write(report_text)
-    print(f"✓ Saved: {report_path}")
+    print(f"Saved: {report_path}")
     print("\n" + report_text)
 
 
-# ============================================================================
+
 # ENTRY POINT
-# ============================================================================
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -749,7 +804,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("STEP 4: VALIDATION — 3-PARAMETER SIR MODEL (τ, γ, ρ)")
     print("=" * 70)
-    print(f"\n✨ Models directory : {args.models_dir}")
+    print(f"\n Models directory : {args.models_dir}")
     print(f"   Pattern          : best_balanced_mlp_model_*.pt")
     print(f"   Parameters       : tau (τ), gamma (γ), rho (ρ)")
 
@@ -761,26 +816,26 @@ if __name__ == "__main__":
     val_loader  = dataloaders['val']
     n_timesteps = dataloaders['metadata']['n_timepoints']
 
-    print(f"✓ Validation samples : {len(val_loader.dataset)}")
+    print(f" Validation samples : {len(val_loader.dataset)}")
 
-    # ── Evaluate all replicates ───────────────────────────────────────────────
+    # Evaluate all replicates 
     results_list, targets, params = evaluate_all_replicates(
         args.models_dir, val_loader, device, n_timesteps
     )
 
-    # ── Aggregate statistics ──────────────────────────────────────────────────
+    #  Aggregate statistics 
     print("\n" + "=" * 70)
     print("AGGREGATE STATISTICS")
     print("=" * 70)
 
     stats_dict = compute_aggregate_statistics(results_list)
 
-    print(f"\n✓ Statistics over {len(results_list)} replicate(s)")
+    print(f"\n Statistics over {len(results_list)} replicate(s)")
     print(f"  Mean R²    : {stats_dict['R2']['mean']:.4f} ± {stats_dict['R2']['std']:.4f}")
     print(f"  Mean MAE_I : {stats_dict['MAE_I']['mean']:.2f} ± {stats_dict['MAE_I']['std']:.2f}")
     print(f"  CV (MAE_I) : {stats_dict['MAE_I']['cv']:.2f}%")
 
-    # ── Visualisations ────────────────────────────────────────────────────────
+    #  Visualisations─
     print("\n" + "=" * 70)
     print("GENERATING VISUALISATIONS")
     print("=" * 70)
@@ -805,15 +860,4 @@ if __name__ == "__main__":
     save_results(results_list, stats_dict, args.output_dir)
 
    
-    print(" VALIDATION COMPLETE")
-    print(f"\nResults saved to : {args.output_dir}")
-    print(f"\n Key files:")
-    print(f"· VALIDATION_REPORT.txt (read this first)")
-    print(f"· validation_results.csv         (spreadsheet)")
-    print(f"· validation_results.json        (machine-readable)")
-    print(f"\n  Plots:")
-    print(f" · training_curves_all_replicates.png")
-    print(f"    · predictions_all_replicates.png")
-    print(f"    · validation_summary.png")
-    print(f"\n  Run command:")
-    print(f"    python step4_validate_SIR3param.py --models_dir {args.models_dir}")
+  

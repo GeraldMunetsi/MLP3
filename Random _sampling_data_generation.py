@@ -10,21 +10,23 @@ from pathlib import Path
 import argparse
 from tqdm import tqdm
 from numpy.random import default_rng
-
+import csv
 
 # GLOBAL CONSTANTS
-N = 10000   # network size (nodes)
-m = 5       # Barabasi-Albert attachment parameter
-
+N = 100000   # network size (nodes)
+m = 10       # Barabasi-Albert attachment parameter
+n_timepoints = 80
+tmax = 80.0  # simulation end time
+n_replicates = 2  # stochastic replicates per parameter set
+n_samples = 2000  # initial random samples (phase 1)
 PARAM_NAMES = ['tau', 'gamma', 'rho']
 
 # Fixed parameter space 
 PARAM_RANGES = {
-    'tau'  : (0.0024, 0.034),  # Expected range: R₀ ∈ [0.12, 4.98] #   recovery rate
-    'gamma': (0.07,  1),  # Infectious period 2-10 days
-    'rho'  : (0.001, 0.010),
+    'tau'  : (0.0005,0.024), 
+    'gamma': (0.01,0.5),     
+    'rho'  : (0.001,0.010),
 }
-
 # BA NETWORK STATISTICS  (computed once, cached)
 
 
@@ -54,7 +56,7 @@ def get_ba_network_stats(N=N, m=m, seed=42):
 
         k_avg  = degrees.mean()
         k2_avg = (degrees ** 2).mean()
-        ratio  = k2_avg / k_avg          # <k2>/<k>
+        ratio  = 27.26         # <k2>/<k>
 
         _NETWORK_STATS_CACHE[cache_key] = {
             'k_avg' : k_avg,
@@ -102,8 +104,7 @@ def generate_network(N=N, m=m, seed=42):
 
 # SIR SIMULATION
 
-def run_sir_replicates(G, tau, gamma, rho,
-                        n_replicates=5, tmax=50, n_timepoints=100):
+def run_sir_replicates(G, tau, gamma, rho,n_replicates=n_replicates, tmax=tmax, n_timepoints=n_timepoints):
     """
     Run n_replicates stochastic SIR simulations and average their outputs.
 
@@ -204,13 +205,13 @@ def run_batch(G, params_array, n_replicates=5, tmax=50, n_timepoints=100):
 
 
 def generate_dataset(
-    initial_samples=500,
+    initial_samples=n_samples,
     batch_size=32,
-    n_replicates=5,
+    n_replicates=n_replicates,
     N=N,
     m=m,
-    tmax=50,
-    n_timepoints=100,
+    tmax=tmax,
+    n_timepoints=n_timepoints,
 ):
     """
     Build the full training dataset via two-phase adaptive Sobol sampling.
@@ -308,9 +309,7 @@ def generate_dataset(
     }
 
 
-# ============================================================================
 # SAVE
-# ============================================================================
 
 def save_dataset(dataset, filepath):
     """Pickle the dataset to disk and print a summary."""
@@ -335,9 +334,7 @@ def save_dataset(dataset, filepath):
     print(f"    step3_train_SIR3param.py  model training")
 
 
-# ============================================================================
 # ENTRY POINT
-# ============================================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -348,22 +345,22 @@ if __name__ == "__main__":
         )
     )
     # Sampling strategy
-    parser.add_argument('--initial_samples', type=int, default=820,
+    parser.add_argument('--initial_samples', type=int, default=n_samples,
                         help='Random samples(default: 500)')
-    parser.add_argument('--batch_size',type=int, default=32,
-                        help='New samples per adaptive round  (default: 32)')
-    parser.add_argument('--n_replicates', type=int, default=3,
-                        help='Stochastic replicates per set (default: 5)')
+    parser.add_argument('--batch_size',type=int, default=35,
+                        help='New samples per adaptive round  ')
+    parser.add_argument('--n_replicates', type=int, default=n_replicates,
+                        help='Stochastic replicates per set ')
     # Network
-    parser.add_argument('--N',type=int,   default=10000,
-                        help='Network size (default: 10000)')
-    parser.add_argument('--m',type=int,default=5,
-                        help='BA attachment parameter (default: 5)')
+    parser.add_argument('--N',type=int,   default=N,
+                        help='Network size') 
+    parser.add_argument('--m',type=int,default=m,
+                        help='BA attachment parameter')
     # Simulation
-    parser.add_argument('--tmax',type=float, default=20.0,
-                        help='Simulation end time (default: 20)')
-    parser.add_argument('--n_timepoints',type=int,default=100,
-                        help='Output time resolution(default: 50)')
+    parser.add_argument('--tmax',type=float, default=tmax,
+                        help='Simulation end time')
+    parser.add_argument('--n_timepoints',type=int,default=n_timepoints,
+                        help='Output time resolution')
     # Output
     parser.add_argument('--output',type=str,
                         default='epidemic_data_age_adaptive_sobol.pkl',
@@ -392,12 +389,59 @@ if __name__ == "__main__":
 
     save_dataset(dataset, args.output)
 
-    print("\n" + "=" * 70)
-    print("DONE")
-    print("=" * 70)
-    print(f"\nPipeline:")
-    print(f"  1.  step1_generate_data_SIR3param.py  ->  {args.output}")
-    print(f"  2.  python step2_split_data.py --input {args.output}")
-    print(f"  3.  python step3_train_SIR3param.py")
-    print(f"  4.  python step4_validate_SIR3param.py")
-    print(f"  5.  python step5_test_SIR3param.py")
+    
+def save_csv(dataset, filepath):
+
+    sims = dataset['simulations']
+    ratio = dataset['network']['ratio']
+    N = dataset['network']['N']
+
+    fields = [
+        'sim_id', 'replicate_id',
+        'tau', 'gamma', 'rho',
+        'R0', 'peak_I', 'peak_time',
+        'final_R', 'attack_rate', 'near_threshold'
+    ]
+
+    with open(filepath, 'w', newline='') as f:
+
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+
+        for sim_id, sim in enumerate(sims):
+
+            tau = sim['params']['tau']
+            gamma = sim['params']['gamma']
+            rho = sim['params']['rho']
+
+            R0 = (tau / gamma) * ratio
+
+            I = sim['output']['I']
+            R = sim['output']['R']
+            t = sim['output']['t']
+
+            peak_I = float(I.max())
+
+            peak_time = float(t[I.argmax()]) if peak_I > 0 else np.nan
+
+            writer.writerow({
+
+                'sim_id': sim_id,
+                'replicate_id': sim.get('replicate_id', 0),
+
+                'tau': tau,
+                'gamma': gamma,
+                'rho': rho,
+
+                'R0': round(R0, 4),
+
+                'peak_I': peak_I,
+                'peak_time': peak_time,
+
+                'final_R': float(R[-1]),
+                'attack_rate': float(R[-1] / N),
+
+                'near_threshold': int(abs(R0 - 1) < 0.2),
+            })
+
+    print(f"CSV saved to {filepath} ({len(sims)} rows)")

@@ -1,18 +1,3 @@
-"""
-step5_test_SIR3param.py
-========================
-FINAL TEST SET EVALUATION — 3-Parameter SIR Emulator (τ, γ, ρ)
-
-⚠  These are your DISSERTATION RESULTS.  Run this ONCE on the held-out
-   test set after all model selection decisions have been made.
-
-Changes from step5_test_REPLICATED_SIMPLIFIED.py:
-  ✗  dummy_graph_stats removed from evaluate_model()
-  ✗  graph_stats argument removed from model.forward() calls
-  ✗  mlp_input_dim / mlp_hidden / mlp_layers removed from default config
-  ✗  import changed: utils_AGE_MLP → utils_SIR
-  ✓  param annotation shows τ, γ, ρ in all plots
-"""
 
 import torch
 import numpy as np
@@ -24,16 +9,42 @@ import json
 import pandas as pd
 from scipy import stats
 
-from step0_model  import create_hybrid_mlp_model
+from step0_model1  import create_hybrid_mlp_model
 from utils_SIR import create_dataloaders, compute_metrics, get_device, PARAM_MINS, PARAM_MAXS
 
 
-# ============================================================================
 # MODEL LOADING
-# ============================================================================
 
+N=100000
+n_timepoints=80
+knots=5
+
+# def load_replicate_model(model_path, device):
+#     """Load a single replicate checkpoint."""
+#     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+
+#     if 'config' in checkpoint:
+#         config = checkpoint['config']
+#     else:
+#         config = {
+#             'n_params'        : 3,
+#             'n_fourier'       : 64,
+#             'fourier_hidden'  : 32,
+#             'param_hidden'    : 16,
+#             'temporal_hidden' : 64,
+#             'dropout'         : 0.3,
+#             'n_knots'         : knots,
+#             'n_timepoints'    : n_timepoints,
+#             'total_population': N,
+#         }
+
+#     model = create_hybrid_mlp_model(config)
+#     model.load_state_dict(checkpoint['model_state_dict'])
+#     model = model.to(device)
+#     model.eval()
+
+#     return model, checkpoint
 def load_replicate_model(model_path, device):
-    """Load a single replicate checkpoint."""
     checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
     if 'config' in checkpoint:
@@ -44,24 +55,45 @@ def load_replicate_model(model_path, device):
             'n_fourier'       : 64,
             'fourier_hidden'  : 32,
             'param_hidden'    : 16,
+            'mlp_hidden'      : 32,
+            'mlp_layers'      : 2,
             'temporal_hidden' : 64,
             'dropout'         : 0.3,
-            'n_knots'         : 12,
-            'n_timepoints'    : 50,
-            'total_population': 10000,
+            'n_knots'         : knots,
+            'n_timepoints'    : n_timepoints,
+            'total_population': N,
         }
 
+    state_dict = checkpoint['model_state_dict']
+
+    # Checkpoint was saved with weight-function forward (had t_grid buffer).
+    # Current model uses sort-based forward — no t_grid needed. Drop it.
+    state_dict.pop('temporal_decoder.t_grid', None)
+
+    # Checkpoint was saved with old g_coeff pinning (n_knots-1 output).
+    # Current model outputs n_knots. Pad with a zero row if needed.
+    g_w_key = 'temporal_decoder.predict_g_coeffs.2.weight'
+    g_b_key = 'temporal_decoder.predict_g_coeffs.2.bias'
+    expected_n_knots = config.get('n_knots', knots)
+
+    if g_w_key in state_dict:
+        actual_out = state_dict[g_w_key].shape[0]
+        if actual_out == expected_n_knots - 1:
+            pad_w = torch.zeros(1, state_dict[g_w_key].shape[1])
+            pad_b = torch.zeros(1)
+            state_dict[g_w_key] = torch.cat([state_dict[g_w_key], pad_w], dim=0)
+            state_dict[g_b_key] = torch.cat([state_dict[g_b_key], pad_b], dim=0)
+            print(f"  [COMPAT] Padded predict_g_coeffs to n_knots={expected_n_knots}")
+
     model = create_hybrid_mlp_model(config)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(state_dict, strict=True)
     model = model.to(device)
     model.eval()
 
     return model, checkpoint
 
-
-# ============================================================================
 # EVALUATION
-# ============================================================================
+
 
 def evaluate_model(model, test_loader, device, n_timesteps):
     """
@@ -163,9 +195,9 @@ def evaluate_all_replicates(models_dir, test_loader, device, n_timesteps):
     return results_list, targets, params
 
 
-# ============================================================================
+
 # AGGREGATE STATISTICS
-# ============================================================================
+
 
 def compute_aggregate_statistics(results_list):
     """Compute mean, std, CV, 95% CI across replicates."""
@@ -193,9 +225,8 @@ def compute_aggregate_statistics(results_list):
     return stats_dict
 
 
-# ============================================================================
 # VISUALISATION
-# ============================================================================
+
 
 def plot_test_predictions(results_list, targets, output_dir, n_samples=8):
     """
@@ -251,7 +282,90 @@ def plot_test_predictions(results_list, targets, output_dir, n_samples=8):
 
     plt.savefig(output_dir / 'test_comparison_plots.png', dpi=200, bbox_inches='tight')
     plt.close()
-    print(f"✓ Saved: {output_dir / 'test_comparison_plots.png'}")
+    print(f"Saved: {output_dir / 'test_comparison_plots.png'}")
+
+
+
+
+
+
+
+def plot_test_predictions(results_list, targets, output_dir, n_samples=5):
+
+    output_dir = Path(output_dir)
+    targets_np = targets.detach().cpu().numpy()
+
+    n_total = len(targets_np)
+    indices = np.linspace(0, n_total - 1, n_samples, dtype=int)
+
+    infected_idx = 1   # S=0, I=1, R=2
+
+    n_reps = len(results_list)
+    pred_colors = plt.cm.tab10(np.linspace(0, 1, n_reps))
+
+    fig = plt.figure(figsize=(10, 3 * n_samples))
+    gs = GridSpec(n_samples, 1, figure=fig, hspace=0.35)
+
+    fig.suptitle(
+        'Test Set Predictions – Infected Compartment (I)',
+        fontsize=16, fontweight='bold'
+    )
+
+    for row, idx in enumerate(indices):
+
+        ax = fig.add_subplot(gs[row, 0])
+        target = targets_np[idx]
+
+        # Ground truth
+        ax.plot(
+            target[:, infected_idx],
+            'o',
+            color='steelblue',
+            alpha=0.7,
+            markersize=5,
+            label='Ground Truth',
+            zorder=10
+        )
+
+        # Replicate predictions
+        for rep_i, result in enumerate(results_list):
+
+            pred = result['predictions'][idx].detach().cpu().numpy()
+
+            ax.plot(
+                pred[:, infected_idx],
+                '-',
+                color=pred_colors[rep_i],
+                linewidth=1.5,
+                alpha=0.6,
+                label=f"M{result['replicate_id']}"
+            )
+
+        ax.set_xlabel('Time step')
+        ax.set_ylabel('Infected count')
+
+        if row == 0:
+            ax.legend(loc='best', fontsize=8, ncol=2)
+
+        ax.grid(True, alpha=0.3, linestyle='--')
+
+    plt.savefig(
+        output_dir / 'test_infected_predictions.png',
+        dpi=200,
+        bbox_inches='tight'
+    )
+
+    plt.close()
+
+    print(f"Saved: {output_dir / 'test_infected_predictions.png'}")
+
+
+
+
+
+
+
+
 
 
 def plot_metrics_distribution(stats_dict, output_dir):
@@ -345,7 +459,7 @@ def save_results(results_list, stats_dict, output_dir):
     print(f"✓ Saved: {output_dir / 'test_replicate_results.csv'}")
 
     # JSON
-    with open(output_dir / 'test_final_statistics.json', 'w') as f:
+    with open(output_dir / 'test_final_statistics.json', 'w', encoding="utf-8") as f:
         json.dump(stats_dict, f, indent=2)
     print(f"✓ Saved: {output_dir / 'test_final_statistics.json'}")
 
@@ -427,16 +541,15 @@ def save_results(results_list, stats_dict, output_dir):
 
     summary_text = "\n".join(summary_lines)
 
-    with open(output_dir / 'FINAL_DISSERTATION_RESULTS.txt', 'w') as f:
+    with open(output_dir / 'FINAL_DISSERTATION_RESULTS.txt', 'w', encoding="utf-8") as f:
         f.write(summary_text)
 
     print(f"✓ Saved: {output_dir / 'FINAL_DISSERTATION_RESULTS.txt'}")
     print("\n" + summary_text)
 
 
-# ============================================================================
 # ENTRY POINT
-# ============================================================================
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -454,7 +567,7 @@ if __name__ == "__main__":
     output_dir.mkdir(exist_ok=True, parents=True)
 
     print(f"\nLoading test data: {args.data}")
-    dataloaders = create_dataloaders(args.data, batch_size=40)
+    dataloaders = create_dataloaders(args.data, batch_size=35)
     test_loader = dataloaders['test']
     n_timesteps = dataloaders['metadata']['n_timepoints']
     print(f"Test samples: {len(test_loader.dataset)}")

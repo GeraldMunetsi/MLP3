@@ -13,13 +13,15 @@ from tqdm import tqdm
 import pandas as pd
 from scipy import stats
 
-from step0_model  import create_hybrid_mlp_model
+from step0_model1  import create_hybrid_mlp_model
+
 from utils_SIR import create_dataloaders, compute_metrics, get_device, EarlyStopping
 
-n_timepoints=200
-N = 10000
+n_timepoints=80
+N = 100000
+knots=5
+n_replicates=2
 
-# REPRODUCIBILITY
 
 
 def set_seed(seed):
@@ -29,8 +31,39 @@ def set_seed(seed):
     np.random.seed(seed)
 
 # BALANCED LOSS
-def compute_balanced_loss(predictions, targets, device, weight_mode='balanced'):
+# def compute_balanced_loss(predictions, targets, device, weight_mode='balanced'):
 
+#     S_pred = predictions[:, :, 0]
+#     I_pred = predictions[:, :, 1]
+#     R_pred = predictions[:, :, 2]
+
+#     S_true = targets[:, :, 0]
+#     I_true = targets[:, :, 1]
+#     R_true = targets[:, :, 2]
+
+#     S_pred_n = S_pred#     
+#     I_pred_n = I_pred #     
+#     R_pred_n = R_pred#     
+ 
+
+#     loss_S = (S_pred_n/N - S_true/N).pow(2).mean()
+#     loss_I = (I_pred_n/N - I_true/N).pow(2).mean()
+
+#     I_pred_peak = I_pred_n.max(dim=1)[0]
+#     I_true_peak = I_true.max(dim=1)[0]
+
+#     loss_I_peak = (I_pred_peak - I_true_peak).pow(2).mean()
+
+#     I_pred_mean = I_pred_n.mean(dim=1)
+#     I_true_mean = I_true.mean(dim=1)
+#     loss_I_mean = (I_pred_mean - I_true_mean).pow(2).mean()
+
+#     total_loss = (loss_S +loss_I + loss_I_peak +loss_I_mean)
+
+#     loss_R = 0.0
+#     return total_loss, loss_S, loss_I, loss_R
+
+def compute_balanced_loss(predictions, targets, device, weight_mode='balanced'):
     S_pred = predictions[:, :, 0]
     I_pred = predictions[:, :, 1]
     R_pred = predictions[:, :, 2]
@@ -39,31 +72,24 @@ def compute_balanced_loss(predictions, targets, device, weight_mode='balanced'):
     I_true = targets[:, :, 1]
     R_true = targets[:, :, 2]
 
-    S_pred_n = S_pred #/ N      # [0, 1]
-    I_pred_n = I_pred #/ N      
-    R_pred_n = R_pred #/ N      
- 
+    # Normalise ALL terms by N so they live on the same scale
+    S_n = S_pred / N;  S_t = S_true / N   
+    I_n = I_pred / N;  I_t = I_true / N   
+    R_n = R_pred / N;  R_t = R_true / N
 
-    loss_S = (S_pred_n - S_true).pow(2).mean()
-    loss_I = (I_pred_n - I_true).pow(2).mean()
+    loss_S = (S_n - S_t).pow(2).mean()
+    loss_I = (I_n - I_t).pow(2).mean()
+    loss_R = (R_n - R_t).pow(2).mean()
 
-    I_pred_peak = I_pred_n.max(dim=1)[0]
-    I_true_peak = I_true.max(dim=1)[0]
-    loss_I_peak = (I_pred_peak - I_true_peak).pow(2).mean()
+    # # # Peak and mean also normalised by N
+    #loss_I_peak = (I_n.max(dim=1)[0]- I_t.max(dim=1)[0]).pow(2).mean()
+    # loss_I_mean = (I_n.mean(dim=1)- I_t.mean(dim=1)  ).pow(2).mean()
 
-    I_pred_mean = I_pred_n.mean(dim=1)
-    I_true_mean = I_true.mean(dim=1)
-    loss_I_mean = (I_pred_mean - I_true_mean).pow(2).mean()
+    loss_R=0
+    total_loss = loss_S + 100*loss_I# + 100*loss_I_peak # +loss_R+ 100*loss_I_mean
 
-    total_loss = (
-        15.0 * loss_S +
-        15.0 * loss_I +
-         8.0 * loss_I_peak +
-         3.0 * loss_I_mean
-    )
-
-    loss_R = 0.0
     return total_loss, loss_S, loss_I, loss_R
+
 
 # TRAIN / VALIDATE ONE EPOCH
 
@@ -209,7 +235,7 @@ def train_single_replicate(
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config['epochs'], eta_min=1e-6
     )
-    early_stopping = EarlyStopping(patience=config['patience'])
+    early_stopping = EarlyStopping(patience=config['patience'],mode='min')
 
     # History buffers 
     history = {
@@ -549,13 +575,13 @@ if __name__ == "__main__":
     )
     parser.add_argument('--input',        type=str,   default='epidemic_data_age_adaptive_sobol_split_augmented.pkl')
     parser.add_argument('--output_dir',   type=str,   default='replicates_outputs')
-    parser.add_argument('--n_replicates', type=int,   default=2)
+    parser.add_argument('--n_replicates', type=int,   default=n_replicates)
     parser.add_argument('--seeds',        type=str,   default=None)
     parser.add_argument('--weight_mode',  type=str,   default='modest',
                          choices=['equal', 'modest', 'balanced'])
-    parser.add_argument('--epochs',       type=int,   default=50)
+    parser.add_argument('--epochs',       type=int,   default=50) #50
     parser.add_argument('--batch_size',   type=int,   default=35) #30
-    parser.add_argument('--lr',           type=float, default=0.01)
+    parser.add_argument('--lr',           type=float, default=0.00006) #1e-3
     parser.add_argument('--weight_decay', type=float, default=1e-3) #-3
     parser.add_argument('--patience',     type=int,   default=35) #35 early stopping parameter , help to know when to stop training, 
     args = parser.parse_args()
@@ -569,14 +595,14 @@ if __name__ == "__main__":
     config = {
         'n_params'        : 3,           # tau, gamma, rho
         'n_fourier'       : 64,
-        'sigma'           : 1.0,
+       'sigma'           : 1.0,
         'fusion_hidden'   :128,
         'latent_dim'      : 64,
         'decoder_hidden'  :  64,
         'dropout'         : 0.3,
-        'n_knots'         : 12,
+        'n_knots'         : knots,
         'n_timepoints'    : n_timepoints,
-        'total_population': 10000,
+        'total_population': N,
         # training
         'epochs'          : args.epochs,
         'batch_size'      : args.batch_size,
@@ -608,7 +634,7 @@ if __name__ == "__main__":
         weight_mode=args.weight_mode,
     )
 
-    # ── Summary statistics ────────────────────────────────────────────────────
+    #  Summary statistics 
   
     print("SUMMARY STATISTICS")
 

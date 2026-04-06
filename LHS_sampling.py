@@ -88,6 +88,10 @@ def latin_hypercube_sampling(n_samples,
 
     sampler = qmc.LatinHypercube(d=d, seed=seed, optimization="random-cd")
     unit_samples = sampler.random(n=n_samples)
+
+
+
+    
 #random coordinated descent optimization to improve space-filling properties of the samples. The "random-cd" option performs random coordinate descent optimization, which iteratively swaps coordinates of sample points to reduce the discrepancy of the sample set, leading to a more uniform distribution of samples across the parameter space.
 #The idea is borrowed from optimization theory.
 # The algorithm tries to improve sample layout by:
@@ -322,9 +326,8 @@ def generate_dataset(
     }
 
 
-# ============================================================================
+
 # SAVE
-# ============================================================================
 
 def save_dataset(dataset, filepath):
     """Pickle the dataset to disk and print a summary."""
@@ -348,9 +351,9 @@ def save_dataset(dataset, filepath):
     print(f"    step3_train_SIR3param.py  model training")
 
 
-# ============================================================================
+
 # ENTRY POINT
-# ============================================================================
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -411,6 +414,4 @@ if __name__ == "__main__":
     print(f"\nPipeline:")
     print(f"  1.  step1_generate_data_SIR3param.py  ->  {args.output}")
     print(f"  2.  python step2_split_data.py --input {args.output}")
-    print(f"  3.  python step3_train_SIR3param.py")
-    print(f"  4.  python step4_validate_SIR3param.py")
-    print(f"  5.  python step5_test_SIR3param.py")
+   

@@ -1,0 +1,51 @@
+======================================================================
+REPLICATES TRAINING SUMMARY  ·  3-Parameter SIR (τ, γ, ρ)
+======================================================================
+
+  Replicates   : 2
+  Weight mode  : modest
+  Seeds        : [42, 123]
+  Output dir   : replicates_outputs
+
+  Model files:
+    · best_balanced_mlp_model_1.pt  (seed=42)
+    · best_balanced_mlp_model_2.pt  (seed=123)
+
+======================================================================
+VALIDATION PERFORMANCE
+======================================================================
+
+MAE_I (Infected Compartment):
+  Mean : 1656.40
+  Std  : 56.10
+  95% CI: [1152.36, 2160.44]
+
+R²:
+  Mean : 0.9723
+  Std  : 0.0025
+  95% CI: [0.9496, 0.9950]
+
+Per-Compartment MAE:
+  MAE_S: 5651.35 ± 250.48  (95% CI: [3400.85, 7901.85])
+  MAE_I: 1656.40 ± 56.10  (95% CI: [1152.36, 2160.44])
+  MAE_R: 5338.87 ± 217.05  (95% CI: [3388.72, 7289.01])
+
+======================================================================
+INDIVIDUAL REPLICATE RESULTS
+======================================================================
+ ID   Seed  Epoch       R²    MAE_I    MAE_S    MAE_R Model File                         
+----------------------------------------------------------------------------------------------------
+  1     42     44   0.9705  1696.07  5828.47  5492.35 best_balanced_mlp_model_1.pt       
+  2    123     48   0.9741  1616.73  5474.24  5185.39 best_balanced_mlp_model_2.pt       
+
+======================================================================
+NEXT STEPS
+======================================================================
+
+  VALIDATE:
+    python step4_validate_SIR3param.py --models_dir replicates_outputs
+
+  TEST (final dissertation results):
+    python step5_test_SIR3param.py --models_dir replicates_outputs
+
+======================================================================

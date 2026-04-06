@@ -1,0 +1,3 @@
+replicate_id,seed,best_epoch,best_val_r2,best_val_mae,best_val_mae_i,best_val_mae_s,best_val_mae_r,training_time_minutes,model_filename,output_dir
+1,42,44,0.9705458283424377,4331.93359375,1696.0711669921875,5828.47216796875,5492.3466796875,0.1535371422767639,best_balanced_mlp_model_1.pt,replicates_outputs
+2,123,48,0.9741188287734985,4087.267578125,1616.733154296875,5474.23583984375,5185.38671875,0.13367411295572917,best_balanced_mlp_model_2.pt,replicates_outputs

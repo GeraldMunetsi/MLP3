@@ -41,7 +41,7 @@ PARAM_RANGES = {
     'tau'  : (0.0024, 0.017),  # Expected range: R₀ ∈ [0.12, 4.98] #   recovery rate
     'gamma': (0.07,  0.5),  # Infectious period 2-10 days
     'rho'  : (0.001, 0.010),
-},
+}
 
 
 # BA NETWORK STATISTICS  (computed once, cached)
@@ -208,7 +208,7 @@ def estimate_errors(simulations, N=N, m=m):
     print(f"  Near R0=1 (0.8-1.2) : {near.sum()} ({100*near.mean():.1f}%)")
 
     # Gaussian weight — peak at R0=1, decays away from threshold
-    threshold_weight = np.exp(-8* (R0 - 1) ** 2)
+    threshold_weight = np.exp(-0.0005* (R0 - 1) ** 2)
 
     # Final score: far-from-existing AND near-threshold = highest priority
     scores = min_distances * (1 + threshold_weight)
